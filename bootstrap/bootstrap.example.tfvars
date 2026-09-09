@@ -1,0 +1,5 @@
+aws_account_id    = "123456789012"
+aws_region        = "eu-central-1"
+github_repository = "YOUR-ORG/YOUR-REPOSITORY"
+route53_zone_id   = "Z0123456789REPLACE"
+# existing_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
