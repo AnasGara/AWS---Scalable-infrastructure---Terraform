@@ -1,0 +1,12 @@
+variable "name" { type = string }
+variable "vpc_id" { type = string }
+variable "public_subnet_ids" { type = list(string) }
+variable "private_subnet_ids" { type = list(string) }
+variable "certificate_arn" { type = string }
+variable "instance_type" { type = string }
+variable "ami_id" { type = string }
+variable "min_size" { type = number }
+variable "desired_capacity" { type = number }
+variable "max_size" { type = number }
+variable "deletion_protection" { type = bool }
+variable "region" { type = string }
