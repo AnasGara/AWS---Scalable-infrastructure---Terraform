@@ -1,0 +1,55 @@
+#!/bin/bash
+set -euo pipefail
+exec > >(tee -a /var/log/bootstrap.log) 2>&1
+# Fail closed: a failed bootstrap never starts a healthy application.
+dnf install -y python3 amazon-cloudwatch-agent logrotate
+id app >/dev/null 2>&1 || useradd --system --no-create-home --shell /sbin/nologin app
+install -d -m 0755 /opt/scalable-iac
+cat > /opt/scalable-iac/server.py <<'PYTHON'
+${app_source}
+PYTHON
+cat > /etc/systemd/system/scalable-iac.service <<'UNIT'
+[Unit]
+Description=Scalable IaC demonstration service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=app
+Group=app
+ExecStart=/usr/bin/python3 /opt/scalable-iac/server.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StandardOutput=append:/var/log/scalable-iac.log
+StandardError=append:/var/log/scalable-iac.log
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'JSON'
+{
+  "agent": {"region": "${region}"},
+  "logs": {"logs_collected": {"files": {"collect_list": [
+    {"file_path": "/var/log/scalable-iac.log", "log_group_name": "${log_group}", "log_stream_name": "{instance_id}/application"},
+    {"file_path": "/var/log/bootstrap.log", "log_group_name": "${log_group}", "log_stream_name": "{instance_id}/bootstrap"}
+  ]}}}
+}
+JSON
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+systemctl daemon-reload
+systemctl enable --now scalable-iac
+cat > /etc/logrotate.d/scalable-iac <<'ROTATE'
+/var/log/scalable-iac.log /var/log/bootstrap.log {
+    daily
+    maxsize 10M
+    rotate 5
+    missingok
+    notifempty
+    copytruncate
+    compress
+}
+ROTATE
