@@ -1,0 +1,10 @@
+aws_account_id  = "123456789012"
+aws_region      = "eu-central-1"
+project         = "scalable-iac"
+environment     = "production"
+certificate_arn = "arn:aws:acm:eu-central-1:123456789012:certificate/REPLACE-ME"
+domain_name     = "app.example.com"
+route53_zone_id = "Z0123456789REPLACE"
+alarm_email     = "operations@example.com"
+# ami_id          = "ami-REPLACE-WITH-APPROVED-AL2023-X86-64-IMAGE"
+# Defaults: two NAT gateways, two EC2 instances, Multi-AZ RDS, deletion protection.
