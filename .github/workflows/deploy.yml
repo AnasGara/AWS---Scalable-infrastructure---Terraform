@@ -1,0 +1,84 @@
+name: Deploy production
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+# One state writer at a time; never cancel an in-flight apply.
+concurrency:
+  group: terraform-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_IN_AUTOMATION: 'true'
+      TF_INPUT: 'false'
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_aws_account_id: ${{ vars.AWS_ACCOUNT_ID }}
+      TF_VAR_certificate_arn: ${{ vars.ACM_CERTIFICATE_ARN }}
+      TF_VAR_domain_name: ${{ vars.DOMAIN_NAME }}
+      TF_VAR_route53_zone_id: ${{ vars.ROUTE53_ZONE_ID }}
+      TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }}
+      TF_VAR_ami_id: ${{ vars.AMI_ID }}
+      TF_VAR_project: scalable-iac
+      TF_VAR_environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.13.5
+          terraform_wrapper: false
+      - name: Check configuration
+        env:
+          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          DEPLOY_ROLE: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          for name in AWS_REGION TF_VAR_aws_account_id TF_VAR_certificate_arn TF_VAR_domain_name TF_VAR_route53_zone_id STATE_BUCKET DEPLOY_ROLE; do
+            test -n "${!name}" || { echo "Missing environment variable: $name" >&2; exit 1; }
+          done
+      - name: Offline checks before requesting AWS credentials
+        run: |
+          terraform fmt -check -recursive
+          terraform -chdir=infra init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=infra validate
+          terraform -chdir=infra test
+          python3 -m unittest discover -s tests -v
+          bash tests/rollout.sh
+      - uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-duration-seconds: 7200
+          role-session-name: github-${{ github.run_id }}
+      - name: Initialize remote state
+        env:
+          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          terraform -chdir=infra init -reconfigure -input=false -lockfile=readonly \
+            -backend-config="bucket=$STATE_BUCKET" \
+            -backend-config="key=production/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="encrypt=true" -backend-config="use_lockfile=true"
+      - name: Plan exact merged revision
+        run: terraform -chdir=infra plan -lock-timeout=5m -out=production.tfplan
+      - name: Apply saved plan
+        run: terraform -chdir=infra apply -lock-timeout=5m production.tfplan
+      - name: Wait for compute rollout
+        run: bash scripts/wait-for-refresh.sh "$(terraform -chdir=infra output -raw autoscaling_group_name)"
+      - name: Verify public HTTPS
+        run: python3 scripts/smoke-test.py "$(terraform -chdir=infra output -raw application_url)"
+      - name: Remove sensitive local plan
+        if: always()
+        run: rm -f infra/production.tfplan
