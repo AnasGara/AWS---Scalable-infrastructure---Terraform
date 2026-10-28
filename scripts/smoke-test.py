@@ -11,9 +11,12 @@ if not url.startswith("https://"):
 for attempt in range(24):
     try:
         with urllib.request.urlopen(url + "/healthz", timeout=10) as response:
-            assert response.status == 200 and json.load(response) == {"status": "ok"}
+            if response.status != 200 or json.load(response) != {"status": "ok"}:
+                raise ValueError("Unexpected health response")
         with urllib.request.urlopen(url + "/", timeout=10) as response:
-            assert json.load(response)["service"] == "scalable-iac"
+            payload = json.load(response)
+            if not isinstance(payload, dict) or payload.get("service") != "scalable-iac":
+                raise ValueError("Unexpected service response")
         print("HTTPS health and service checks passed")
         break
     except (urllib.error.URLError, TimeoutError, AssertionError, ValueError):
